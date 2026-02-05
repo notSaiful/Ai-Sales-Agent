@@ -1,0 +1,259 @@
+{
+    "name": "AI Sales Engine - Voice Callback Handler",
+    "nodes": [
+        {
+            "parameters": {
+                "httpMethod": "POST",
+                "path": "voice-callback",
+                "responseMode": "responseNode",
+                "options": {}
+            },
+            "id": "voice-callback-webhook",
+            "name": "Voice Callback Webhook",
+            "type": "n8n-nodes-base.webhook",
+            "typeVersion": 1,
+            "position": [
+                250,
+                300
+            ],
+            "webhookId": "voice-callback"
+        },
+        {
+            "parameters": {
+                "operation": "update",
+                "documentId": "={{ $env.GOOGLE_SHEETS_ID }}",
+                "sheetName": "Voice_Call_Log",
+                "columns": {
+                    "column": "call_sid",
+                    "value": "={{ $json.call_sid }}"
+                },
+                "dataToUpdate": {
+                    "mappings": [
+                        {
+                            "column": "call_completed_at",
+                            "value": "={{ $json.timestamp }}"
+                        },
+                        {
+                            "column": "call_duration",
+                            "value": "={{ $json.call_duration }}"
+                        },
+                        {
+                            "column": "call_status",
+                            "value": "={{ $json.call_status }}"
+                        },
+                        {
+                            "column": "transcript",
+                            "value": "={{ $json.transcript }}"
+                        },
+                        {
+                            "column": "sentiment",
+                            "value": "={{ $json.sentiment }}"
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "id": "update-voice-log",
+            "name": "Update Voice Call Log",
+            "type": "n8n-nodes-base.googleSheets",
+            "typeVersion": 4,
+            "position": [
+                450,
+                300
+            ],
+            "credentials": {
+                "googleSheetsOAuth2Api": {
+                    "id": "4",
+                    "name": "Google Sheets OAuth2"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "operation": "get",
+                "documentId": "={{ $env.GOOGLE_SHEETS_ID }}",
+                "sheetName": "Master_Lead_Log",
+                "filters": {
+                    "conditions": [
+                        {
+                            "column": "lead_id",
+                            "condition": "equals",
+                            "value": "={{ $json.lead_id }}"
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "id": "get-lead-data",
+            "name": "Get Lead Data",
+            "type": "n8n-nodes-base.googleSheets",
+            "typeVersion": 4,
+            "position": [
+                650,
+                300
+            ],
+            "credentials": {
+                "googleSheetsOAuth2Api": {
+                    "id": "4",
+                    "name": "Google Sheets OAuth2"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "operation": "update",
+                "email": "={{ $json.email }}",
+                "updateFields": {
+                    "properties": {
+                        "voice_transcript": "={{ $json.transcript }}",
+                        "voice_call_status": "={{ $json.call_status }}",
+                        "voice_call_duration": "={{ $json.call_duration }}",
+                        "budget_range": "={{ $json.structured_data.budget }}",
+                        "timeline": "={{ $json.structured_data.timeline }}",
+                        "decision_maker": "={{ $json.structured_data.decision_maker }}",
+                        "pain_points": "={{ $json.structured_data.pain_points.join(', ') }}",
+                        "call_sentiment": "={{ $json.sentiment }}"
+                    },
+                    "tags": [
+                        "voice-completed"
+                    ]
+                }
+            },
+            "id": "update-crm-voice-data",
+            "name": "Update CRM with Voice Data",
+            "type": "n8n-nodes-base.hubspot",
+            "typeVersion": 2,
+            "position": [
+                850,
+                300
+            ],
+            "credentials": {
+                "hubspotApi": {
+                    "id": "5",
+                    "name": "HubSpot API"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "method": "POST",
+                "url": "https://graph.facebook.com/v18.0/{{ $env.WHATSAPP_PHONE_ID }}/messages",
+                "sendBody": true,
+                "bodyParameters": {
+                    "parameters": [
+                        {
+                            "name": "messaging_product",
+                            "value": "whatsapp"
+                        },
+                        {
+                            "name": "to",
+                            "value": "={{ $env.SALES_REP_PHONE }}"
+                        },
+                        {
+                            "name": "type",
+                            "value": "text"
+                        },
+                        {
+                            "name": "text",
+                            "value": "={{ { \"body\": \"✅ VOICE CALL COMPLETED\\n\\nLead: \" + $json.lead_name + \"\\nDuration: \" + Math.floor($json.call_duration / 60) + \" min\\nSentiment: \" + $json.sentiment + \"\\n\\nKey Info:\\nBudget: \" + $json.structured_data.budget + \"\\nTimeline: \" + $json.structured_data.timeline + \"\\nDecision Maker: \" + ($json.structured_data.decision_maker ? \"Yes\" : \"No\") + \"\\n\\nFull transcript in CRM\" } }}"
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "id": "notify-sales-voice-complete",
+            "name": "Notify Sales - Voice Complete",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4,
+            "position": [
+                1050,
+                300
+            ],
+            "credentials": {
+                "whatsAppApi": {
+                    "id": "6",
+                    "name": "WhatsApp API"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "respondWith": "json",
+                "responseBody": "={{ { \"success\": true, \"lead_id\": $json.lead_id, \"message\": \"Voice callback processed\" } }}"
+            },
+            "id": "callback-response",
+            "name": "Callback Response",
+            "type": "n8n-nodes-base.respondToWebhook",
+            "typeVersion": 1,
+            "position": [
+                1250,
+                300
+            ]
+        }
+    ],
+    "connections": {
+        "Voice Callback Webhook": {
+            "main": [
+                [
+                    {
+                        "node": "Update Voice Call Log",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Update Voice Call Log": {
+            "main": [
+                [
+                    {
+                        "node": "Get Lead Data",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Get Lead Data": {
+            "main": [
+                [
+                    {
+                        "node": "Update CRM with Voice Data",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Update CRM with Voice Data": {
+            "main": [
+                [
+                    {
+                        "node": "Notify Sales - Voice Complete",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Notify Sales - Voice Complete": {
+            "main": [
+                [
+                    {
+                        "node": "Callback Response",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        }
+    },
+    "settings": {
+        "executionOrder": "v1"
+    },
+    "staticData": null,
+    "tags": [],
+    "triggerCount": 1,
+    "updatedAt": "2026-02-05T10:10:00.000Z",
+    "versionId": "1"
+}

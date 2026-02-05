@@ -1,0 +1,43 @@
+# Environment variables (NEVER commit these!)
+.env
+.env.local
+.env.production
+
+# n8n data
+.n8n/
+n8n-data/
+
+# API Keys and Secrets
+**/credentials.json
+**/service-account*.json
+
+# OS Files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+logs/
+npm-debug.log*
+
+# Dependencies
+node_modules/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Backup files
+*.bak
+*~
+
+# Client-specific data (if managing multiple clients)
+clients/*/
+!clients/.gitkeep

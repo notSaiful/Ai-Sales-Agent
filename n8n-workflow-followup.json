@@ -1,0 +1,417 @@
+{
+    "name": "AI Sales Engine - Follow-up Sequence",
+    "nodes": [
+        {
+            "parameters": {
+                "rule": {
+                    "interval": [
+                        {
+                            "field": "hours",
+                            "hoursInterval": 6
+                        }
+                    ]
+                }
+            },
+            "id": "schedule-trigger",
+            "name": "Schedule Every 6 Hours",
+            "type": "n8n-nodes-base.scheduleTrigger",
+            "typeVersion": 1,
+            "position": [
+                250,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "operation": "getAll",
+                "documentId": "={{ $env.GOOGLE_SHEETS_ID }}",
+                "sheetName": "Master_Lead_Log",
+                "filters": {
+                    "conditions": [
+                        {
+                            "column": "follow_up_active",
+                            "condition": "equals",
+                            "value": "true"
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "id": "get-active-sequences",
+            "name": "Get Active Follow-up Sequences",
+            "type": "n8n-nodes-base.googleSheets",
+            "typeVersion": 4,
+            "position": [
+                450,
+                300
+            ],
+            "credentials": {
+                "googleSheetsOAuth2Api": {
+                    "id": "4",
+                    "name": "Google Sheets OAuth2"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "jsCode": "const leads = $input.all();\nconst now = new Date();\nconst leadsToContact = [];\n\nfor (const lead of leads) {\n  // Check if manually contacted in CRM\n  if (lead.json.contacted_manually === true) {\n    continue;\n  }\n  \n  const lastContact = new Date(lead.json.last_contact);\n  const daysSince = Math.floor((now - lastContact) / (1000 * 60 * 60 * 24));\n  \n  const sequenceType = lead.json.sequence_type;\n  let shouldContact = false;\n  let messageType = '';\n  \n  // HOT sequence: Days 0, 1, 3, 7\n  if (sequenceType === 'HOT') {\n    if (daysSince === 0) {\n      shouldContact = true;\n      messageType = 'hot_day0';\n    } else if (daysSince === 1) {\n      shouldContact = true;\n      messageType = 'hot_day1';\n    } else if (daysSince === 3) {\n      shouldContact = true;\n      messageType = 'hot_day3';\n    } else if (daysSince === 7) {\n      shouldContact = true;\n      messageType = 'hot_day7';\n    }\n  }\n  \n  // WARM sequence: Days 0, 2, 5, 7\n  if (sequenceType === 'WARM') {\n    if (daysSince === 0) {\n      shouldContact = true;\n      messageType = 'warm_day0';\n    } else if (daysSince === 2) {\n      shouldContact = true;\n      messageType = 'warm_day2';\n    } else if (daysSince === 5) {\n      shouldContact = true;\n      messageType = 'warm_day5';\n    } else if (daysSince === 7) {\n      shouldContact = true;\n      messageType = 'warm_day7';\n    }\n  }\n  \n  if (shouldContact) {\n    leadsToContact.push({\n      ...lead.json,\n      follow_up_day: daysSince,\n      message_type: messageType\n    });\n  }\n}\n\nreturn leadsToContact.map(lead => ({ json: lead }));"
+            },
+            "id": "filter-leads-to-contact",
+            "name": "Filter Leads to Contact Today",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                650,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "rules": {
+                    "values": [
+                        {
+                            "conditions": {
+                                "string": [
+                                    {
+                                        "value1": "={{ $json.message_type }}",
+                                        "value2": "hot_day0"
+                                    }
+                                ]
+                            },
+                            "output": 0
+                        },
+                        {
+                            "conditions": {
+                                "string": [
+                                    {
+                                        "value1": "={{ $json.message_type }}",
+                                        "value2": "hot_day1"
+                                    }
+                                ]
+                            },
+                            "output": 1
+                        },
+                        {
+                            "conditions": {
+                                "string": [
+                                    {
+                                        "value1": "={{ $json.message_type }}",
+                                        "value2": "hot_day3"
+                                    }
+                                ]
+                            },
+                            "output": 2
+                        },
+                        {
+                            "conditions": {
+                                "string": [
+                                    {
+                                        "value1": "={{ $json.message_type }}",
+                                        "value2": "hot_day7"
+                                    }
+                                ]
+                            },
+                            "output": 3
+                        },
+                        {
+                            "conditions": {
+                                "string": [
+                                    {
+                                        "value1": "={{ $json.message_type }}",
+                                        "value2": "warm_day0"
+                                    }
+                                ]
+                            },
+                            "output": 4
+                        },
+                        {
+                            "conditions": {
+                                "string": [
+                                    {
+                                        "value1": "={{ $json.message_type }}",
+                                        "value2": "warm_day2"
+                                    }
+                                ]
+                            },
+                            "output": 5
+                        },
+                        {
+                            "conditions": {
+                                "string": [
+                                    {
+                                        "value1": "={{ $json.message_type }}",
+                                        "value2": "warm_day5"
+                                    }
+                                ]
+                            },
+                            "output": 6
+                        },
+                        {
+                            "conditions": {
+                                "string": [
+                                    {
+                                        "value1": "={{ $json.message_type }}",
+                                        "value2": "warm_day7"
+                                    }
+                                ]
+                            },
+                            "output": 7
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "id": "message-router",
+            "name": "Message Type Router",
+            "type": "n8n-nodes-base.switch",
+            "typeVersion": 1,
+            "position": [
+                850,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "method": "POST",
+                "url": "https://graph.facebook.com/v18.0/{{ $env.WHATSAPP_PHONE_ID }}/messages",
+                "sendBody": true,
+                "bodyParameters": {
+                    "parameters": [
+                        {
+                            "name": "messaging_product",
+                            "value": "whatsapp"
+                        },
+                        {
+                            "name": "to",
+                            "value": "={{ $json.phone }}"
+                        },
+                        {
+                            "name": "type",
+                            "value": "text"
+                        },
+                        {
+                            "name": "text",
+                            "value": "={{ { \"body\": \"Hi \" + $json.name.split(' ')[0] + \", great speaking with you earlier! I'm sending over the information we discussed. When's a good time for a detailed demo? Reply YES to schedule, or let me know your availability.\" } }}"
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "id": "send-hot-day0",
+            "name": "Send HOT Day 0 (WhatsApp)",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4,
+            "position": [
+                1100,
+                100
+            ],
+            "credentials": {
+                "whatsAppApi": {
+                    "id": "6",
+                    "name": "WhatsApp API"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "method": "POST",
+                "url": "={{ $env.SMTP_API_URL }}",
+                "sendBody": true,
+                "bodyParameters": {
+                    "parameters": [
+                        {
+                            "name": "to",
+                            "value": "={{ $json.email }}"
+                        },
+                        {
+                            "name": "subject",
+                            "value": "Quick follow-up - {{ $json.company }}"
+                        },
+                        {
+                            "name": "body",
+                            "value": "Hi {{ $json.name.split(' ')[0] }},\n\nJust wanted to follow up on our conversation yesterday. I've put together a personalized proposal based on what you shared about {{ $json.pain_points }}.\n\nWhen would be a good time for a 15-minute demo this week?\n\nBest,\n{{ $env.SALES_REP_NAME }}"
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "id": "send-warm-day2",
+            "name": "Send WARM Day 2 (Email)",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4,
+            "position": [
+                1100,
+                500
+            ],
+            "credentials": {
+                "httpHeaderAuth": {
+                    "id": "7",
+                    "name": "Email API Auth"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "operation": "update",
+                "documentId": "={{ $env.GOOGLE_SHEETS_ID }}",
+                "sheetName": "Master_Lead_Log",
+                "columns": {
+                    "column": "lead_id",
+                    "value": "={{ $json.lead_id }}"
+                },
+                "dataToUpdate": {
+                    "mappings": [
+                        {
+                            "column": "last_contact",
+                            "value": "={{ $now.toISO() }}"
+                        },
+                        {
+                            "column": "sequence_day",
+                            "value": "={{ $json.follow_up_day }}"
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "id": "update-follow-up-log",
+            "name": "Update Follow-up Log",
+            "type": "n8n-nodes-base.googleSheets",
+            "typeVersion": 4,
+            "position": [
+                1300,
+                300
+            ],
+            "credentials": {
+                "googleSheetsOAuth2Api": {
+                    "id": "4",
+                    "name": "Google Sheets OAuth2"
+                }
+            }
+        }
+    ],
+    "connections": {
+        "Schedule Every 6 Hours": {
+            "main": [
+                [
+                    {
+                        "node": "Get Active Follow-up Sequences",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Get Active Follow-up Sequences": {
+            "main": [
+                [
+                    {
+                        "node": "Filter Leads to Contact Today",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Filter Leads to Contact Today": {
+            "main": [
+                [
+                    {
+                        "node": "Message Type Router",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Message Type Router": {
+            "main": [
+                [
+                    {
+                        "node": "Send HOT Day 0 (WhatsApp)",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "Update Follow-up Log",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "Update Follow-up Log",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "Update Follow-up Log",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "Update Follow-up Log",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "Send WARM Day 2 (Email)",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "Update Follow-up Log",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "Update Follow-up Log",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Send HOT Day 0 (WhatsApp)": {
+            "main": [
+                [
+                    {
+                        "node": "Update Follow-up Log",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Send WARM Day 2 (Email)": {
+            "main": [
+                [
+                    {
+                        "node": "Update Follow-up Log",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        }
+    },
+    "settings": {
+        "executionOrder": "v1"
+    },
+    "staticData": null,
+    "tags": [],
+    "triggerCount": 1,
+    "updatedAt": "2026-02-05T10:10:00.000Z",
+    "versionId": "1"
+}
