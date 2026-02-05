@@ -1,0 +1,722 @@
+{
+  "name": "AI Sales Engine - Lead Qualification & Voice Response",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lead-intake",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "*"
+        }
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook: Lead Intake",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [250, 300],
+      "webhookId": "lead-intake",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "1",
+          "name": "Webhook Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "lead_id",
+              "value": "={{ $now.format('x') }}-{{ $randomString(8) }}"
+            },
+            {
+              "name": "timestamp_received",
+              "value": "={{ $now.toISO() }}"
+            },
+            {
+              "name": "contact.name",
+              "value": "={{ $json.name }}"
+            },
+            {
+              "name": "contact.phone",
+              "value": "={{ $json.phone }}"
+            },
+            {
+              "name": "contact.email",
+              "value": "={{ $json.email }}"
+            },
+            {
+              "name": "contact.company",
+              "value": "={{ $json.company || 'N/A' }}"
+            },
+            {
+              "name": "source.channel",
+              "value": "={{ $json.source }}"
+            },
+            {
+              "name": "source.campaign",
+              "value": "={{ $json.campaign || 'organic' }}"
+            },
+            {
+              "name": "message",
+              "value": "={{ $json.message }}"
+            },
+            {
+              "name": "status",
+              "value": "qualifying"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "init-lead-object",
+      "name": "Initialize Lead Object",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 2,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "model": "gpt-4o",
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "You are a B2B sales qualification AI for {{ $env.PRODUCT_DESCRIPTION }}.\n\nAnalyze the lead information and return a JSON object with:\n1. intent_summary: 2-3 sentence summary of what the lead wants\n2. score: \"HOT\", \"WARM\", or \"COLD\"\n3. score_reasoning: Why you gave this score\n4. budget_indicator: 0-10 (10 = clear high budget signals)\n5. urgency_indicator: 0-10 (10 = needs solution immediately)\n6. fit_indicator: 0-10 (10 = perfect ICP match)\n\nHOT = budget_indicator >= 7 AND urgency_indicator >= 6 AND fit_indicator >= 7\nWARM = At least 2 indicators >= 5\nCOLD = Everything else\n\nReturn ONLY valid JSON, no markdown."
+            },
+            {
+              "role": "user",
+              "content": "Lead Name: {{ $json['contact.name'] }}\nCompany: {{ $json['contact.company'] }}\nSource: {{ $json['source.channel'] }}\nMessage: {{ $json.message }}\n\nAnalyze and qualify this lead."
+            }
+          ]
+        },
+        "options": {
+          "temperature": 0.3
+        }
+      },
+      "id": "ai-qualification",
+      "name": "AI Qualification (GPT-4)",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1,
+      "position": [650, 300],
+      "credentials": {
+        "openAiApi": {
+          "id": "2",
+          "name": "OpenAI API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const aiResponse = $input.item.json.choices[0].message.content;\nlet parsed;\n\ntry {\n  parsed = JSON.parse(aiResponse);\n} catch (error) {\n  // Fallback to WARM if AI fails\n  parsed = {\n    \"intent_summary\": \"AI parsing failed - manual review needed\",\n    \"score\": \"WARM\",\n    \"score_reasoning\": \"Default due to parsing error\",\n    \"budget_indicator\": 5,\n    \"urgency_indicator\": 5,\n    \"fit_indicator\": 5\n  };\n  \n  $input.item.json.error_log = $input.item.json.error_log || [];\n  $input.item.json.error_log.push({\n    \"timestamp\": new Date().toISOString(),\n    \"node\": \"Parse AI Response\",\n    \"error\": error.message\n  });\n}\n\nreturn {\n  json: {\n    ...($input.item.json),\n    qualification: parsed,\n    timestamp_qualified: new Date().toISOString()\n  }\n};"
+      },
+      "id": "parse-ai-response",
+      "name": "Parse AI Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [850, 300]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "string": [
+                  {
+                    "value1": "={{ $json.qualification.score }}",
+                    "value2": "HOT"
+                  }
+                ]
+              },
+              "output": 0
+            },
+            {
+              "conditions": {
+                "string": [
+                  {
+                    "value1": "={{ $json.qualification.score }}",
+                    "value2": "WARM"
+                  }
+                ]
+              },
+              "output": 1
+            },
+            {
+              "conditions": {
+                "string": [
+                  {
+                    "value1": "={{ $json.qualification.score }}",
+                    "value2": "COLD"
+                  }
+                ]
+              },
+              "output": 2
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "score-router",
+      "name": "Score Router",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 1,
+      "position": [1050, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.elevenlabs.io/v1/convai/conversation",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "elevenLabsApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "agent_id",
+              "value": "={{ $env.ELEVENLABS_AGENT_ID }}"
+            },
+            {
+              "name": "phone_number",
+              "value": "={{ $json['contact.phone'] }}"
+            },
+            {
+              "name": "metadata",
+              "value": "={{ { \"lead_id\": $json.lead_id, \"lead_name\": $json['contact.name'], \"company\": $json['contact.company'] } }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "trigger-voice-call",
+      "name": "Trigger Voice Call (ElevenLabs)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1300, 100],
+      "credentials": {
+        "elevenLabsApi": {
+          "id": "3",
+          "name": "ElevenLabs API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": "={{ $env.GOOGLE_SHEETS_ID }}",
+        "sheetName": "Voice_Call_Log",
+        "columns": {
+          "mappings": [
+            {
+              "column": "lead_id",
+              "value": "={{ $json.lead_id }}"
+            },
+            {
+              "column": "name",
+              "value": "={{ $json['contact.name'] }}"
+            },
+            {
+              "column": "phone",
+              "value": "={{ $json['contact.phone'] }}"
+            },
+            {
+              "column": "call_initiated_at",
+              "value": "={{ $now.toISO() }}"
+            },
+            {
+              "column": "call_sid",
+              "value": "={{ $json.conversation_id }}"
+            },
+            {
+              "column": "status",
+              "value": "initiated"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "log-voice-call",
+      "name": "Log Voice Call Initiated",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [1500, 100],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "4",
+          "name": "Google Sheets OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "upsert",
+        "email": "={{ $json['contact.email'] }}",
+        "additionalFields": {
+          "properties": {
+            "lead_score": "HOT",
+            "lead_source": "={{ $json['source.channel'] }}",
+            "qualification_summary": "={{ $json.qualification.intent_summary }}",
+            "budget_indicator": "={{ $json.qualification.budget_indicator }}",
+            "urgency_indicator": "={{ $json.qualification.urgency_indicator }}",
+            "fit_indicator": "={{ $json.qualification.fit_indicator }}",
+            "lifecycle_stage": "salesqualifiedlead",
+            "hs_lead_status": "NEW"
+          },
+          "tags": ["ai-qualified", "hot-lead", "voice-pending"]
+        }
+      },
+      "id": "update-crm-hot",
+      "name": "Update CRM - Hot Lead",
+      "type": "n8n-nodes-base.hubspot",
+      "typeVersion": 2,
+      "position": [1700, 100],
+      "credentials": {
+        "hubspotApi": {
+          "id": "5",
+          "name": "HubSpot API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://graph.facebook.com/v18.0/{{ $env.WHATSAPP_PHONE_ID }}/messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "whatsAppApi",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "messaging_product",
+              "value": "whatsapp"
+            },
+            {
+              "name": "to",
+              "value": "={{ $env.SALES_REP_PHONE }}"
+            },
+            {
+              "name": "type",
+              "value": "text"
+            },
+            {
+              "name": "text",
+              "value": "={{ { \"body\": \"🔥 HOT LEAD ALERT\\n\\nName: \" + $json['contact.name'] + \"\\nCompany: \" + $json['contact.company'] + \"\\nEmail: \" + $json['contact.email'] + \"\\nPhone: \" + $json['contact.phone'] + \"\\n\\nSummary: \" + $json.qualification.intent_summary + \"\\n\\nBudget: \" + $json.qualification.budget_indicator + \"/10\\nUrgency: \" + $json.qualification.urgency_indicator + \"/10\\n\\n✅ Voice call initiated\\n📞 Call them NOW!\" } }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "whatsapp-alert",
+      "name": "WhatsApp Alert to Sales",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1900, 100],
+      "credentials": {
+        "whatsAppApi": {
+          "id": "6",
+          "name": "WhatsApp API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "follow_up.sequence_active",
+              "value": "true"
+            },
+            {
+              "name": "follow_up.sequence_type",
+              "value": "HOT"
+            },
+            {
+              "name": "follow_up.sequence_day",
+              "value": "0"
+            },
+            {
+              "name": "follow_up.last_contact",
+              "value": "={{ $now.toISO() }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "start-hot-followup",
+      "name": "Start Hot Follow-up",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 2,
+      "position": [2100, 100]
+    },
+    {
+      "parameters": {
+        "operation": "upsert",
+        "email": "={{ $json['contact.email'] }}",
+        "additionalFields": {
+          "properties": {
+            "lead_score": "WARM",
+            "lead_source": "={{ $json['source.channel'] }}",
+            "qualification_summary": "={{ $json.qualification.intent_summary }}",
+            "budget_indicator": "={{ $json.qualification.budget_indicator }}",
+            "urgency_indicator": "={{ $json.qualification.urgency_indicator }}",
+            "fit_indicator": "={{ $json.qualification.fit_indicator }}",
+            "lifecycle_stage": "marketingqualifiedlead",
+            "hs_lead_status": "OPEN"
+          },
+          "tags": ["ai-qualified", "warm-lead"]
+        }
+      },
+      "id": "update-crm-warm",
+      "name": "Update CRM - Warm Lead",
+      "type": "n8n-nodes-base.hubspot",
+      "typeVersion": 2,
+      "position": [1300, 300],
+      "credentials": {
+        "hubspotApi": {
+          "id": "5",
+          "name": "HubSpot API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "follow_up.sequence_active",
+              "value": "true"
+            },
+            {
+              "name": "follow_up.sequence_type",
+              "value": "WARM"
+            },
+            {
+              "name": "follow_up.sequence_day",
+              "value": "0"
+            },
+            {
+              "name": "follow_up.last_contact",
+              "value": "={{ $now.toISO() }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "start-warm-followup",
+      "name": "Start Warm Follow-up",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 2,
+      "position": [1500, 300]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": "={{ $env.GOOGLE_SHEETS_ID }}",
+        "sheetName": "Cold_Leads_Log",
+        "columns": {
+          "mappings": [
+            {
+              "column": "timestamp",
+              "value": "={{ $now.toISO() }}"
+            },
+            {
+              "column": "name",
+              "value": "={{ $json['contact.name'] }}"
+            },
+            {
+              "column": "email",
+              "value": "={{ $json['contact.email'] }}"
+            },
+            {
+              "column": "source",
+              "value": "={{ $json['source.channel'] }}"
+            },
+            {
+              "column": "intent_summary",
+              "value": "={{ $json.qualification.intent_summary }}"
+            },
+            {
+              "column": "reasoning",
+              "value": "={{ $json.qualification.score_reasoning }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "log-cold-lead",
+      "name": "Log Cold Lead",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [1300, 500],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "4",
+          "name": "Google Sheets OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": "={{ $env.GOOGLE_SHEETS_ID }}",
+        "sheetName": "Master_Lead_Log",
+        "columns": {
+          "mappings": [
+            {
+              "column": "lead_id",
+              "value": "={{ $json.lead_id }}"
+            },
+            {
+              "column": "timestamp_received",
+              "value": "={{ $json.timestamp_received }}"
+            },
+            {
+              "column": "name",
+              "value": "={{ $json['contact.name'] }}"
+            },
+            {
+              "column": "email",
+              "value": "={{ $json['contact.email'] }}"
+            },
+            {
+              "column": "phone",
+              "value": "={{ $json['contact.phone'] }}"
+            },
+            {
+              "column": "source",
+              "value": "={{ $json['source.channel'] }}"
+            },
+            {
+              "column": "score",
+              "value": "={{ $json.qualification.score }}"
+            },
+            {
+              "column": "intent_summary",
+              "value": "={{ $json.qualification.intent_summary }}"
+            },
+            {
+              "column": "response_time_seconds",
+              "value": "={{ Math.floor((new Date($json.timestamp_qualified) - new Date($json.timestamp_received)) / 1000) }}"
+            },
+            {
+              "column": "status",
+              "value": "={{ $json.status }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "master-log",
+      "name": "Master Log (Google Sheets)",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [2300, 300],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "4",
+          "name": "Google Sheets OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"success\": true, \"lead_id\": $json.lead_id, \"score\": $json.qualification.score, \"message\": \"Lead received and processed\" } }}"
+      },
+      "id": "webhook-response",
+      "name": "Webhook Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [2500, 300]
+    }
+  ],
+  "connections": {
+    "Webhook: Lead Intake": {
+      "main": [
+        [
+          {
+            "node": "Initialize Lead Object",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Initialize Lead Object": {
+      "main": [
+        [
+          {
+            "node": "AI Qualification (GPT-4)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Qualification (GPT-4)": {
+      "main": [
+        [
+          {
+            "node": "Parse AI Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse AI Response": {
+      "main": [
+        [
+          {
+            "node": "Score Router",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Score Router": {
+      "main": [
+        [
+          {
+            "node": "Trigger Voice Call (ElevenLabs)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Update CRM - Warm Lead",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log Cold Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trigger Voice Call (ElevenLabs)": {
+      "main": [
+        [
+          {
+            "node": "Log Voice Call Initiated",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Voice Call Initiated": {
+      "main": [
+        [
+          {
+            "node": "Update CRM - Hot Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update CRM - Hot Lead": {
+      "main": [
+        [
+          {
+            "node": "WhatsApp Alert to Sales",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WhatsApp Alert to Sales": {
+      "main": [
+        [
+          {
+            "node": "Start Hot Follow-up",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Start Hot Follow-up": {
+      "main": [
+        [
+          {
+            "node": "Master Log (Google Sheets)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update CRM - Warm Lead": {
+      "main": [
+        [
+          {
+            "node": "Start Warm Follow-up",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Start Warm Follow-up": {
+      "main": [
+        [
+          {
+            "node": "Master Log (Google Sheets)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Cold Lead": {
+      "main": [
+        [
+          {
+            "node": "Master Log (Google Sheets)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Master Log (Google Sheets)": {
+      "main": [
+        [
+          {
+            "node": "Webhook Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 1,
+  "updatedAt": "2026-02-05T10:10:00.000Z",
+  "versionId": "1"
+}
